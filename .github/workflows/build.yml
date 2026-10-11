@@ -1,0 +1,62 @@
+name: Build 3105
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Build (no signing)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project ThreeOneOSFive.xcodeproj \
+            -target 3105 \
+            -configuration Release \
+            -sdk iphoneos \
+            -arch arm64 \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            CONFIGURATION_BUILD_DIR="$PWD/build_out" \
+            build | tail -40
+
+      - name: Verify build output
+        run: |
+          ls -la build_out || true
+          ls -la build_out/*.app 2>/dev/null && echo "APP OK" || (echo "APP MISSING"; exit 1)
+
+      - name: Package unsigned ipa
+        run: |
+          rm -rf Payload
+          mkdir -p Payload
+          cp -R build_out/3105.app Payload/
+          zip -qry 3105-unsigned.ipa Payload
+          ls -la 3105-unsigned.ipa
+
+      - name: Fake-sign with ldid (for TrollStore)
+        run: |
+          brew install ldid >/dev/null 2>&1 || true
+          if command -v ldid >/dev/null 2>&1; then
+            ldid -S 3105-unsigned.ipa && cp 3105-unsigned.ipa 3105-ldid.ipa || true
+          fi
+          ls -la *.ipa
+
+      - name: Upload ipa
+        uses: actions/upload-artifact@v4
+        with:
+          name: 3105-ipa
+          path: |
+            *.ipa
+            build_out/3105.app
+          if-no-files-found: error
