@@ -12,51 +12,66 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Show Xcode version
+      - name: Xcode version
         run: xcodebuild -version
 
-      - name: Build (no signing)
+      - name: List project
+        run: |
+          xcodebuild -project ThreeOneOSFive.xcodeproj -list 2>&1 | head -40
+
+      - name: Build (verbose)
+        id: build
+        continue-on-error: true
         run: |
           set -o pipefail
           xcodebuild \
             -project ThreeOneOSFive.xcodeproj \
-            -target 3105 \
+            -scheme 3105 \
             -configuration Release \
             -sdk iphoneos \
-            -arch arm64 \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$PWD/dd" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGN_ENTITLEMENTS="" \
-            CONFIGURATION_BUILD_DIR="$PWD/build_out" \
-            build | tail -40
+            build > build.log 2>&1
+          echo "exit=$?" >> build.log
+          tail -5 build.log
 
-      - name: Verify build output
+      - name: Show errors
+        if: always()
         run: |
-          ls -la build_out || true
-          ls -la build_out/*.app 2>/dev/null && echo "APP OK" || (echo "APP MISSING"; exit 1)
+          echo "======== ERROR LINES ========"
+          grep -nE "error:|error :|fatal error|cannot find|No such|failed" build.log | head -40 || true
+          echo "======== LAST 60 LINES ========"
+          tail -60 build.log || true
 
-      - name: Package unsigned ipa
+      - name: Find app
+        if: always()
         run: |
-          rm -rf Payload
-          mkdir -p Payload
-          cp -R build_out/3105.app Payload/
-          zip -qry 3105-unsigned.ipa Payload
-          ls -la 3105-unsigned.ipa
+          find . -name "*.app" -maxdepth 6 2>/dev/null | head
+          ls -la dd/Build/Products/Release-iphoneos/ 2>/dev/null || true
 
-      - name: Fake-sign with ldid (for TrollStore)
+      - name: Package ipa
+        if: steps.build.outcome == 'success'
         run: |
+          APP=$(find . -name "3105.app" -maxdepth 6 | head -1)
+          echo "APP=$APP"
+          rm -rf Payload && mkdir Payload
+          cp -R "$APP" Payload/
+          zip -qry 3105.ipa Payload
           brew install ldid >/dev/null 2>&1 || true
-          if command -v ldid >/dev/null 2>&1; then
-            ldid -S 3105-unsigned.ipa && cp 3105-unsigned.ipa 3105-ldid.ipa || true
-          fi
+          command -v ldid >/dev/null && ldid -S 3105.ipa && mv 3105.ipa 3105-signed.ipa || true
           ls -la *.ipa
 
-      - name: Upload ipa
+      - name: Upload artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: 3105-ipa
+          name: build-output
           path: |
             *.ipa
-            build_out/3105.app
-          if-no-files-found: error
+            build.log
+            dd/Build/Products/Release-iphoneos/*.app
+          if-no-files-found: warn
