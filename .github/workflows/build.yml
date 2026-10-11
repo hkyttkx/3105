@@ -15,10 +15,6 @@ jobs:
       - name: Xcode version
         run: xcodebuild -version
 
-      - name: List project
-        run: |
-          xcodebuild -project ThreeOneOSFive.xcodeproj -list 2>&1 | head -40
-
       - name: Build (verbose)
         id: build
         continue-on-error: true
@@ -31,39 +27,44 @@ jobs:
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
             -derivedDataPath "$PWD/dd" \
+            HEADER_SEARCH_PATHS="$(PWD)/include" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGN_ENTITLEMENTS="" \
             build > build.log 2>&1
-          echo "exit=$?" >> build.log
-          tail -5 build.log
+          echo "=== exit=$? ===" | tee -a build.log
+          tail -3 build.log
 
       - name: Show errors
         if: always()
         run: |
-          echo "======== ERROR LINES ========"
-          grep -nE "error:|error :|fatal error|cannot find|No such|failed" build.log | head -40 || true
-          echo "======== LAST 60 LINES ========"
-          tail -60 build.log || true
+          echo "======== ERRORS ========"
+          grep -nE "error:|fatal error|BUILD FAILED|BUILD SUCCEEDED" build.log | head -30 || true
 
-      - name: Find app
+      - name: Locate app
         if: always()
         run: |
-          find . -name "*.app" -maxdepth 6 2>/dev/null | head
-          ls -la dd/Build/Products/Release-iphoneos/ 2>/dev/null || true
+          find . -name "3105.app" -maxdepth 6 2>/dev/null
+          ls -la dd/Build/Products/Release-iphoneos/3105.app 2>/dev/null | head
 
       - name: Package ipa
-        if: steps.build.outcome == 'success'
+        if: always()
         run: |
           APP=$(find . -name "3105.app" -maxdepth 6 | head -1)
-          echo "APP=$APP"
-          rm -rf Payload && mkdir Payload
-          cp -R "$APP" Payload/
-          zip -qry 3105.ipa Payload
-          brew install ldid >/dev/null 2>&1 || true
-          command -v ldid >/dev/null && ldid -S 3105.ipa && mv 3105.ipa 3105-signed.ipa || true
-          ls -la *.ipa
+          if [ -n "$APP" ] && [ -f "$APP/3105" ]; then
+            echo "APP found: $APP"
+            rm -rf Payload && mkdir Payload
+            cp -R "$APP" Payload/
+            zip -qry 3105-unsigned.ipa Payload
+            brew install ldid >/dev/null 2>&1 || true
+            if command -v ldid >/dev/null 2>&1; then
+              ldid -S 3105-unsigned.ipa && cp 3105-unsigned.ipa 3105-ldid.ipa
+            fi
+            ls -la *.ipa
+          else
+            echo "App binary missing, skip ipa"
+          fi
 
       - name: Upload artifacts
         if: always()
@@ -73,5 +74,5 @@ jobs:
           path: |
             *.ipa
             build.log
-            dd/Build/Products/Release-iphoneos/*.app
+            dd/Build/Products/Release-iphoneos/3105.app/**
           if-no-files-found: warn
